@@ -1,0 +1,371 @@
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Phineas & Ferb: Summer Adventure</title>
+<style>
+*{box-sizing:border-box}
+body{margin:0;background:#101b34;color:white;font-family:system-ui,Arial}
+header{padding:12px 18px;background:#101b34;display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap}
+h1{font-size:clamp(19px,4vw,29px);margin:0;color:#ffe46b}
+#stats{display:flex;gap:8px;flex-wrap:wrap}
+.badge{background:#22375b;padding:7px 12px;border-radius:10px}
+main{max-width:1100px;margin:auto;padding:12px}
+#frame{position:relative;border:3px solid #4778b6;border-radius:14px;overflow:hidden;background:#71ceff}
+canvas{width:100%;height:auto;display:block;touch-action:none}
+#start{position:absolute;inset:0;background:#07142ad9;display:flex;align-items:center;justify-content:center;text-align:center;padding:20px}
+.card{max-width:480px;background:#152646;border:1px solid #7297d7;border-radius:20px;padding:25px}
+.card h2{font-size:clamp(25px,5vw,42px);margin:5px;color:#ffe46b}
+button{border:0;border-radius:12px;background:#ffca43;color:#17223b;font-weight:900;font-size:16px;padding:12px 20px;cursor:pointer}
+button:hover{filter:brightness(1.1)}
+#controls{display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;padding:12px 0}
+.pad{display:flex;gap:8px}
+.pad button{min-width:50px;min-height:48px;touch-action:none}
+small{color:#c5d7fa}
+</style>
+</head>
+<body>
+<header>
+  <h1>☀️ PHINEAS & FERB</h1>
+  <div id="stats">
+    <div class="badge">🪙 <span id="coins">0</span></div>
+    <div class="badge">❤️ <span id="lives">3</span></div>
+    <div class="badge">🏁 <span id="level">1</span></div>
+  </div>
+</header>
+<main>
+<div id="frame">
+<canvas id="game" width="960" height="540"></canvas>
+<div id="start">
+ <div class="card">
+  <div style="font-size:55px">☀️🛠️🦆</div>
+  <h2 id="title">SUMMER ADVENTURE!</h2>
+  <p id="intro">Help Phineas and Ferb collect invention parts, jump across the backyard, avoid robots, and reach the finish!</p>
+  <button id="play">START ADVENTURE</button>
+  <p><small>WASD / Arrow keys to move · Space to jump</small></p>
+ </div>
+</div>
+</div>
+<div id="controls">
+ <div><b>Controls:</b> A/D or ←/→ move · Space/W/↑ jump</div>
+ <div class="pad">
+  <button id="left" aria-label="Move left">◀</button>
+  <button id="jump" aria-label="Jump">⬆ JUMP</button>
+  <button id="right" aria-label="Move right">▶</button>
+ </div>
+</div>
+<p><small>Character images are loaded from public/assets. Add your licensed character artwork there. Without the files, the game uses simple illustrated stand-ins.</small></p>
+</main>
+
+<script>
+const canvas=document.getElementById("game");
+const ctx=canvas.getContext("2d");
+const $=id=>document.getElementById(id);
+
+const images={};
+for(const name of ["phineas","ferb","perry"]){
+  images[name]=new Image();
+  images[name].src=`assets/${name}.png`;
+}
+
+const keys={left:false,right:false,jump:false};
+let running=false,gameOver=false;
+let coins=0,lives=3,camera=0,elapsed=0;
+let player,items,enemies,platforms,goal,checkpoint;
+const worldWidth=4300;
+const gravity=1700;
+
+function reset(){
+  coins=0;lives=3;camera=0;elapsed=0;
+  player={x:80,y:300,w:48,h:76,vx:0,vy:0,ground:false,invincible:0,character:"phineas"};
+  items=Array.from({length:32},(_,i)=>({
+    x:240+i*123,y:300+Math.sin(i*1.7)*80,
+    got:false
+  }));
+  platforms=[
+    {x:0,y:440,w:750,h:100},
+    {x:810,y:400,w:300,h:140},
+    {x:1170,y:350,w:300,h:190},
+    {x:1530,y:420,w:350,h:120},
+    {x:1940,y:370,w:300,h:170},
+    {x:2310,y:320,w:340,h:220},
+    {x:2720,y:410,w:340,h:130},
+    {x:3120,y:360,w:350,h:180},
+    {x:3530,y:420,w:300,h:120},
+    {x:3890,y:390,w:410,h:150},
+    {x:310,y:340,w:130,h:18},
+    {x:920,y:300,w:130,h:18},
+    {x:1280,y:250,w:120,h:18},
+    {x:2040,y:280,w:140,h:18},
+    {x:2410,y:220,w:150,h:18},
+    {x:3220,y:270,w:150,h:18}
+  ];
+  enemies=[
+    {x:560,y:390,w:42,h:50,min:480,max:700,v:90},
+    {x:1350,y:300,w:42,h:50,min:1200,max:1420,v:110},
+    {x:2160,y:320,w:42,h:50,min:1980,max:2200,v:120},
+    {x:2900,y:360,w:42,h:50,min:2750,max:3000,v:130},
+    {x:3710,y:370,w:42,h:50,min:3550,max:3780,v:140}
+  ];
+  goal={x:4140,y:305};
+  checkpoint=0;
+  updateHUD();
+}
+
+function updateHUD(){
+ $("coins").textContent=coins;
+ $("lives").textContent=lives;
+ $("level").textContent=1;
+}
+
+function rect(x,y,w,h,color){
+ ctx.fillStyle=color;ctx.fillRect(x,y,w,h);
+}
+
+function drawBackground(){
+ const sky=ctx.createLinearGradient(0,0,0,540);
+ sky.addColorStop(0,"#4db9ff");
+ sky.addColorStop(1,"#d2f4ff");
+ rect(0,0,960,540,"#79d0ff");
+ ctx.fillStyle=sky;ctx.fillRect(0,0,960,540);
+
+ // Distant skyline and hills.
+ for(let i=0;i<12;i++){
+   let x=((i*145-camera*.15)%1400+1400)%1400-100;
+   rect(x,235+(i%4)*22,70,210,"#7bb7da");
+   rect(x+18,210+(i%4)*22,34,30,"#91c7e8");
+ }
+ ctx.fillStyle="#5ebd63";
+ ctx.beginPath();ctx.ellipse(400-camera*.08,440,700,180,0,0,Math.PI*2);ctx.fill();
+
+ // Large tree.
+ const tx=130-camera*.35;
+ rect(tx-17,190,45,300,"#925a30");
+ for(const [x,y,r] of [[tx,185,100],[tx-65,230,70],[tx+55,245,75]]){
+   ctx.fillStyle="#278d50";ctx.beginPath();ctx.arc(x,y,r,0,Math.PI*2);ctx.fill();
+ }
+ // Clouds.
+ for(let i=0;i<5;i++){
+   const x=((i*255-camera*.2)%1200+1200)%1200-100;
+   ctx.fillStyle="#ffffffaa";
+   for(const [dx,dy,r] of [[0,0,20],[22,-10,26],[48,0,20]]){
+     ctx.beginPath();ctx.arc(x+dx,100+dy,r,0,Math.PI*2);ctx.fill();
+   }
+ }
+}
+
+function drawPlatforms(){
+ for(const p of platforms){
+  const x=p.x-camera;
+  if(x+p.w<0||x>960)continue;
+  rect(x,p.y,p.w,p.h,"#8b572f");
+  rect(x,p.y,p.w,13,"#57c653");
+  for(let bx=x;bx<x+p.w;bx+=28){
+   rect(bx,p.y+17,2,Math.max(0,p.h-17),"#724526");
+  }
+ }
+}
+
+function drawCharacter(name,x,y,w,h,facing=1){
+ const img=images[name];
+ if(img.complete&&img.naturalWidth>0){
+  ctx.save();
+  if(facing<0){ctx.translate(x*2+w,0);ctx.scale(-1,1);ctx.drawImage(img,x,y,w,h);}
+  else ctx.drawImage(img,x,y,w,h);
+  ctx.restore();
+  return;
+ }
+ // Simple placeholder while no image file is present.
+ if(name==="phineas"){
+  ctx.fillStyle="#f4b18b";ctx.fillRect(x+w*.25,y+18,w*.5,h*.36);
+  ctx.fillStyle="#f4b18b";
+  ctx.beginPath();ctx.moveTo(x+w*.2,y+23);ctx.lineTo(x+w*.95,y+3);ctx.lineTo(x+w*.6,y+30);ctx.fill();
+  ctx.fillStyle="#ed533d";ctx.fillRect(x+w*.15,y+43,w*.7,h*.25);
+  ctx.fillStyle="#f5c447";ctx.fillRect(x+w*.15,y+h*.68,w*.7,h*.1);
+ }else if(name==="ferb"){
+  ctx.fillStyle="#73b84d";ctx.fillRect(x+w*.2,y+4,w*.55,17);
+  ctx.fillStyle="#f0c5a1";ctx.fillRect(x+w*.22,y+20,w*.55,28);
+  ctx.fillStyle="#9b5bd1";ctx.fillRect(x+w*.18,y+47,w*.65,h*.27);
+ }else{
+  ctx.fillStyle="#21aeb1";ctx.beginPath();ctx.ellipse(x+w/2,y+h/2,w*.4,h*.45,0,0,Math.PI*2);ctx.fill();
+  ctx.fillStyle="#f7b92e";ctx.fillRect(x+w*.45,y+h*.35,w*.5,8);
+  ctx.fillStyle="#81542c";ctx.fillRect(x+w*.1,y+4,w*.8,8);
+ }
+ // Shared legs, eyes and outlines.
+ rect(x+w*.22,y+h*.87,w*.22,h*.13,"#293e66");
+ rect(x+w*.58,y+h*.87,w*.22,h*.13,"#293e66");
+ ctx.fillStyle="white";ctx.beginPath();ctx.arc(x+w*.42,y+h*.31,6,0,7);ctx.fill();
+ ctx.fillStyle="#1c263c";ctx.beginPath();ctx.arc(x+w*.44,y+h*.31,2.5,0,7);ctx.fill();
+}
+
+function drawItems(){
+ for(const it of items){
+  if(it.got)continue;
+  const x=it.x-camera;
+  if(x<-30||x>990)continue;
+  ctx.fillStyle="#ffce39";ctx.strokeStyle="#b57819";ctx.lineWidth=3;
+  ctx.beginPath();ctx.arc(x,it.y,13,0,Math.PI*2);ctx.fill();ctx.stroke();
+  ctx.fillStyle="#fff2a3";ctx.fillRect(x-3,it.y-7,6,14);
+ }
+}
+
+function drawEnemies(){
+ for(const e of enemies){
+  const x=e.x-camera;
+  if(x<-60||x>1000)continue;
+  rect(x,e.y+12,e.w,e.h-12,"#556781");
+  rect(x+4,e.y,e.w-8,23,"#839bb2");
+  rect(x+7,e.y+8,9,5,"#ff385a");
+  rect(x+26,e.y+8,9,5,"#ff385a");
+  rect(x+4,e.y+e.h-2,12,8,"#29314b");
+  rect(x+27,e.y+e.h-2,12,8,"#29314b");
+  ctx.fillStyle="#ffce39";ctx.font="bold 12px system-ui";ctx.fillText("BOT",x+7,e.y+34);
+ }
+}
+
+function drawGoal(){
+ const x=goal.x-camera;
+ rect(x,goal.y,8,135,"#e7f0ff");
+ ctx.fillStyle="#ffcf41";
+ ctx.beginPath();ctx.moveTo(x+8,goal.y);ctx.lineTo(x+62,goal.y+18);ctx.lineTo(x+8,goal.y+36);ctx.fill();
+ ctx.fillStyle="white";ctx.font="bold 14px system-ui";ctx.fillText("FINISH",x-16,goal.y-12);
+}
+
+function draw(){
+ drawBackground();
+ drawPlatforms();
+ drawItems();
+ drawEnemies();
+ drawGoal();
+
+ const px=player.x-camera;
+ if(player.invincible<=0||Math.floor(elapsed*12)%2===0){
+  drawCharacter(player.character,px,player.y,player.w,player.h,player.vx<0?-1:1);
+ }
+ ctx.fillStyle="#132442cc";ctx.fillRect(12,12,230,42);
+ ctx.fillStyle="white";ctx.font="bold 16px system-ui";
+ ctx.fillText("INVENTION PARTS: "+coins,25,39);
+}
+
+function overlaps(a,b){
+ return a.x<b.x+b.w&&a.x+a.w>b.x&&a.y<b.y+b.h&&a.y+a.h>b.y;
+}
+
+function hitPlatform(oldY){
+ player.ground=false;
+ for(const p of platforms){
+  if(player.x+player.w>p.x&&player.x<p.x+p.w&&
+     oldY+player.h<=p.y+12&&player.y+player.h>=p.y&&player.vy>=0){
+    player.y=p.y-player.h;
+    player.vy=0;
+    player.ground=true;
+  }
+ }
+}
+
+function hurt(){
+ if(player.invincible>0)return;
+ lives--;
+ player.invincible=1.5;
+ player.vy=-420;
+ player.x=Math.max(checkpoint,player.x-65);
+ updateHUD();
+ if(lives<=0)endGame(false);
+}
+
+let last=0;
+function loop(now){
+ requestAnimationFrame(loop);
+ const dt=Math.min((now-last)/1000||0,.033);
+ last=now;
+ if(!running){draw();return}
+ elapsed+=dt;
+
+ const oldY=player.y;
+ player.vx=(keys.right?260:0)-(keys.left?260:0);
+ player.x+=player.vx*dt;
+ player.x=Math.max(0,Math.min(worldWidth-player.w,player.x));
+
+ if(keys.jump&&player.ground){
+  player.vy=-610;
+  player.ground=false;
+ }
+ player.vy+=gravity*dt;
+ player.y+=player.vy*dt;
+ hitPlatform(oldY);
+
+ if(player.y>650){
+  hurt();
+  if(lives>0){player.y=180;player.vy=0}
+ }
+
+ player.invincible=Math.max(0,player.invincible-dt);
+ camera=Math.max(0,Math.min(worldWidth-960,player.x-300));
+
+ for(const it of items){
+  if(!it.got&&overlaps(player,{x:it.x-13,y:it.y-13,w:26,h:26})){
+   it.got=true;coins++;updateHUD();
+  }
+ }
+
+ for(const e of enemies){
+  e.x+=e.v*dt;
+  if(e.x<e.min||e.x>e.max)e.v*=-1;
+  if(overlaps(player,e))hurt();
+ }
+
+ if(overlaps(player,{x:goal.x,y:goal.y,w:65,h:135})){
+  endGame(true);
+ }
+ draw();
+}
+
+function endGame(won){
+ running=false;gameOver=true;
+ $("start").style.display="flex";
+ $("title").textContent=won?"INVENTION COMPLETE!":"TRY AGAIN!";
+ $("intro").textContent=won
+  ?`You made it! You collected ${coins} invention parts. Great work!`
+  :`The robots got you! You collected ${coins} invention parts. Try another run!`;
+ $("play").textContent=won?"PLAY AGAIN":"RETRY";
+}
+
+function startGame(){
+ reset();
+ running=true;gameOver=false;
+ $("start").style.display="none";
+ canvas.focus();
+}
+
+$("play").addEventListener("click",startGame);
+
+function setKey(code,value){
+ if(code==="ArrowLeft"||code==="KeyA")keys.left=value;
+ if(code==="ArrowRight"||code==="KeyD")keys.right=value;
+ if(code==="Space"||code==="ArrowUp"||code==="KeyW")keys.jump=value;
+}
+addEventListener("keydown",e=>{
+ if(["ArrowLeft","ArrowRight","ArrowUp","Space"].includes(e.code))e.preventDefault();
+ setKey(e.code,true);
+});
+addEventListener("keyup",e=>setKey(e.code,false));
+addEventListener("blur",()=>{keys.left=keys.right=keys.jump=false});
+
+function bindButton(id,key){
+ const b=$(id);
+ b.addEventListener("pointerdown",e=>{e.preventDefault();keys[key]=true;b.setPointerCapture(e.pointerId)});
+ for(const ev of ["pointerup","pointercancel","lostpointercapture"])
+  b.addEventListener(ev,()=>keys[key]=false);
+}
+bindButton("left","left");
+bindButton("right","right");
+bindButton("jump","jump");
+
+reset();
+requestAnimationFrame(loop);
+</script>
+</body>
+</html>
+
